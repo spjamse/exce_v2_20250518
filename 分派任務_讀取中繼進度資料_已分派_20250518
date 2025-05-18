@@ -1,0 +1,100 @@
+Function GetHeaderDict(ws As Worksheet, headerRow As Long) As Object
+    Dim dict As Object: Set dict = CreateObject("Scripting.Dictionary")
+    Dim col As Long, lastCol As Long
+    lastCol = ws.Cells(headerRow, ws.Columns.Count).End(xlToLeft).Column
+    For col = 1 To lastCol
+        If ws.Cells(headerRow, col).Value <> "" Then
+            dict(ws.Cells(headerRow, col).Value) = col
+        End If
+    Next col
+    Set GetHeaderDict = dict
+End Function
+Function FindByCode1(ws As Worksheet, codeCol As String, code As String) As Range
+    Dim lastRow As Long
+    lastRow = ws.Cells(ws.Rows.Count, codeCol).End(xlUp).Row
+    Set FindByCode1 = ws.Range(codeCol & "2:" & codeCol & lastRow).Find( _
+        What:=Trim(code), LookIn:=xlValues, LookAt:=xlWhole)
+End Function
+Sub 讀取中繼進度資料_已分派()
+    Dim midPath As String, wbMid As Workbook, wsMid As Worksheet
+    Dim dictMid As Object, dictAssigned As Object, dictTotal As Object
+    Dim wsAssigned As Worksheet, wsTotal As Worksheet
+    Dim lastRowMid As Long, i As Long
+    Dim code As String, matchRow As Range, totalRow As Range
+
+    ' 設定檔案與工作表
+    midPath = ThisWorkbook.Path & "\中繼檔.xlsx"
+    Set wsAssigned = ThisWorkbook.Sheets("已分派")
+    Set wsTotal = ThisWorkbook.Sheets("總資料")
+    Set dictAssigned = GetHeaderDict(wsAssigned, 2)
+    Set dictTotal = GetHeaderDict(wsTotal, 1)
+
+    ' 開啟中繼檔案
+    Set wbMid = Workbooks.Open(midPath)
+    Set wsMid = wbMid.Sheets("中繼資料")
+    Set dictMid = GetHeaderDict(wsMid, 1)
+
+    ' 檢查必要欄位
+    Dim fields As Variant: fields = Array("編碼", "設計完成圖", "組裝中", "已轉交")
+    Dim f As Variant
+    For Each f In fields
+        If Not dictMid.exists(f) Then
+            MsgBox "中繼檔缺少欄位：" & f, vbCritical
+            wbMid.Close False
+            Exit Sub
+        End If
+        If Not dictAssigned.exists(f) Then
+            MsgBox "已分派缺少欄位：" & f, vbCritical
+            wbMid.Close False
+            Exit Sub
+        End If
+    Next f
+
+    ' 額外檢查狀態欄
+    If Not dictTotal.exists("狀態") Then
+        MsgBox "總資料缺少欄位：狀態", vbCritical
+        wbMid.Close False
+        Exit Sub
+    End If
+
+    lastRowMid = wsMid.Cells(wsMid.Rows.Count, dictMid("編碼")).End(xlUp).Row
+
+    ' 遍歷中繼資料
+    For i = 2 To lastRowMid
+        code = Trim(wsMid.Cells(i, dictMid("編碼")).Value)
+        If code = "" Then GoTo 下一筆
+
+        ' 寫入已分派工作表
+        Set matchRow = FindByCode1(wsAssigned, "A", code)
+        If Not matchRow Is Nothing Then
+            For Each f In Array("設計完成圖", "組裝中", "已轉交")
+                wsAssigned.Cells(matchRow.Row, dictAssigned(f)).Value = wsMid.Cells(i, dictMid(f)).Value
+            Next f
+        End If
+
+        ' 更新總資料工作表狀態
+        Set totalRow = FindByCode1(wsTotal, "A", code)
+        If Not totalRow Is Nothing Then
+            Dim val1 As String, val2 As String, val3 As String, newStatus As String
+            val1 = Trim(wsMid.Cells(i, dictMid("設計完成圖")).Value)
+            val2 = Trim(wsMid.Cells(i, dictMid("組裝中")).Value)
+            val3 = Trim(wsMid.Cells(i, dictMid("已轉交")).Value)
+
+            If val1 = "V" And val2 = "V" And val3 = "V" Then
+                newStatus = "已轉交"
+            ElseIf val1 = "V" And val2 = "V" Then
+                newStatus = "組裝中"
+            ElseIf val1 = "V" Then
+                newStatus = "設計完成"
+            Else
+                newStatus = "" ' 可留空或設定為其他預設值
+            End If
+
+            wsTotal.Cells(totalRow.Row, dictTotal("狀態")).Value = newStatus
+        End If
+下一筆:
+    Next i
+
+    wbMid.Close False
+    MsgBox "已成功從中繼檔回寫進度至『已分派』與『總資料』工作表。", vbInformation
+End Sub
